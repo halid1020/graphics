@@ -67,7 +67,7 @@ void main(void)
 <![CDATA[#version 410 
 
 layout(triangles) in;
-layout(triangle_strip, max_vertices = 3) out;
+layout(triangle_strip, max_vertices = 20) out;
 
 uniform mat4 mvMatrix;
 uniform mat4 pMatrix;
@@ -115,6 +115,16 @@ void emit_triangle(in Data vertices[3]) {
   }
 }
 
+Data interpolate(in Data p, in Data q) {
+  Data m;
+  m.position_camSpace = (p.position_camSpace + q.position_camSpace)/2;
+  m.normal_camSpace = normalize(p.normal_camSpace) + normalize(q.normal_camSpace);
+  m.textureCoordinate = (p.textureCoordinate + q.textureCoordinate)/2;
+  m.color = (p.color + q.color)/2;
+  m.gll_position = (p.gll_position + q.gll_position)/2;
+  return m;
+}
+
 void emit_strip(in Data vertices[3], in int level) {
   if (level == 0) {
   	emit_triangle(vertices);
@@ -125,7 +135,11 @@ void emit_strip(in Data vertices[3], in int level) {
     for (int i = 0; i < 3; i++) {
       new_vertices[i*3] = vertices[i];
     }
-    //new_vertices[1] = interpolate(vertices[0], vertices[1]);
+    
+    new_vertices[1] = interpolate(vertices[0], vertices[1]);
+    new_vertices[2] = interpolate(vertices[0], vertices[2]);
+    new_vertices[4] = interpolate(vertices[1], vertices[2]);
+    new_vertices[5] = interpolate(vertices[0], vertices[2]);
     
 	for (int i = 0; i < emit_size; i++) {
   	  gl_Position = new_vertices[i].gll_position;
@@ -145,11 +159,11 @@ void main() {
   Data vertices[3];
 
   for (int i = 0; i < 3; i++) {
+    vertices[i].gll_position = gl_in[i].gl_Position;
     vertices[i].position_camSpace=vertexIn[i].position_camSpace;
     vertices[i].normal_camSpace=vertexIn[i].normal_camSpace;
     vertices[i].textureCoordinate=vertexIn[i].textureCoordinate;
     vertices[i].color=vertexIn[i].color;
-    vertices[i].gll_position = gl_in[i].gl_Position;
   }
   emit_strip(vertices, subdivision_level);
   //emit_triangle(vertices, positions);
