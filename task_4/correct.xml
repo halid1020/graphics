@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<pipeline>
+<vertex>
+<![CDATA[#version 410 
+
+in vec3 vertex_worldSpace;
+in vec3 normal_worldSpace;
+in vec2 textureCoordinate_input;
+
+uniform mat4 mvMatrix;
+uniform mat4 pMatrix;
+uniform mat3 normalMatrix; //mv matrix without translation
+
+uniform vec4 lightPosition_camSpace; //light Position in camera space
+
+uniform vec4 ambient;
+uniform vec4 diffuse;
+uniform vec4 specular;
+uniform float shininess;
+uniform float ambientCoefficent;
+uniform float diffuseCoefficent;
+uniform float specularCoefficent;
+
+out data
+{
+  vec4 position_camSpace;
+  vec3 normal_camSpace;
+  vec2 textureCoordinate;
+  vec4 color;
+}vertexInOut;
+
+//Vertex shader compute the vectors per vertex
+void main(void)
+{
+  //Put the vertex in the correct coordinate system by applying the model view matrix
+  vec4 vertex_camSpace = mvMatrix*vec4(vertex_worldSpace,1.0f); 
+  vertexInOut.position_camSpace = vertex_camSpace;
+  
+  //Apply the model-view transformation to the normal (only rotation, no translation)
+  //Normals put in the camera space
+  vertexInOut.normal_camSpace = normalize(normalMatrix*normal_worldSpace);
+  
+  //we need to make sure that the normals and texture coordinates
+  //aren't optimised away, 
+  //so we have to use them somehow.
+  //Uniforms and array objects that are nor used for 
+  //the final output(!) are  removed during 
+  //glsl compilation regardless if you assign them. 
+  vec4 workaround = 
+		vec4((vertexInOut.normal_camSpace.x + textureCoordinate_input.x)*0.0001, 0, 0, 1);
+  
+  //forwarding pure red as RGBA color
+  //Try to use the normals as RGB color or the texture coordiantes!
+  vertexInOut.color = vec4(1.0, 0.0, 0.0, 1.0);
+  
+  //a negligible contribution from normals and texcoords is added 
+  //to ensure these array objects are not optimsed away 
+  vertexInOut.color += workaround;
+  
+  //Texture coordinate
+  vertexInOut.textureCoordinate = textureCoordinate_input;
+  
+  gl_Position = pMatrix * vertex_camSpace;
+}
+]]></vertex>
+<geom>
+<![CDATA[#version 410 
+
+layout(triangles) in;
+layout(triangle_strip, max_vertices = 72) out;
+
+uniform mat4 mvMatrix;
+uniform mat4 pMatrix;
+uniform mat3 normalMatrix; //mv matrix without translation
+
+uniform vec4 lightPosition_camSpace; //light Position in camera space
+
+uniform int time;
+
+uniform int level;
+
+
+in data
+{
+  vec4 position_camSpace;
+  vec3 normal_camSpace;
+  vec2 textureCoordinate;
+  vec4 color;
+}vertexIn[3];
+
+out fragmentData
+{
+  vec4 position_camSpace;
+  vec3 normal_camSpace;
+  vec2 textureCoordinate;
+  vec4 color;
+} frag;
+
+struct Meta {
+	vec4 position_camSpace;
+	vec4 position_s;
+	vec4 position_t;
+ 
+	vec3 normal_camSpace;
+	vec3 normal_s;
+	vec3 normal_t;
+
+	vec2 texture;
+	vec2 texture_s;
+	vec2 texture_t;
+
+	vec4 color;
+	vec4 color_s;
+	vec4 color_t;
+	
+};
+
+void emit_vertex(in float s, in float t, in Meta meta) {
+ 	vec4 position = meta.position_camSpace + 
+			 (s*meta.position_s + t*meta.position_t);
+	vec3 normal = meta.normal_camSpace + 
+             (s*meta.normal_s + t*meta.normal_t);
+
+	gl_Position = position;
+	frag.position_camSpace = position;     
+	frag.normal_camSpace = normalize(normal);
+    frag.textureCoordinate =  meta.texture + (s*meta.texture_s + t*meta.texture_t);
+    frag.color = meta.color + (s*meta.color_s + t*meta.color_t);
+	EmitVertex();
+}
+
+Meta init() {
+	Meta meta;
+	meta.position_camSpace = gl_in[0].gl_Position;
+	meta.position_s = gl_in[1].gl_Position - gl_in[0].gl_Position;
+	meta.position_t = gl_in[2].gl_Position - gl_in[0].gl_Position;
+    
+	meta.normal_camSpace = vertexIn[0].normal_camSpace;
+	meta.normal_s = vertexIn[1].normal_camSpace - vertexIn[0].normal_camSpace;
+	meta.normal_t = vertexIn[2].normal_camSpace - vertexIn[0].normal_camSpace;
+
+	meta.texture = vertexIn[0].textureCoordinate;
+	meta.texture_s = vertexIn[1].textureCoordinate - vertexIn[0].textureCoordinate;
+    meta.texture_t = vertexIn[2].textureCoordinate - vertexIn[0].textureCoordinate;
+
+	meta.color = vertexIn[0].color;
+	meta.color_s = vertexIn[1].color;
+	meta.color_t = vertexIn[2].color;
+	//meta.position_camSpace = vertexIn[0].position_camSpace
+	return meta;
+}
+
+void main() {
+
+  int layers = 1 << level;
+  float s = 0.0;
+  float t = 0.0;
+  float ds = 1.0/float(layers);
+  float dt = 1.0/float(layers);
+  Meta meta = init();
+
+  for (int i = layers; i >= 1; i--) {
+	t = 0.0;
+	for (int j = 1; j <= i; j++) {
+		emit_vertex(s, t, meta);
+		emit_vertex(s+ds, t, meta);
+		t += dt;
+	}
+	emit_vertex(s, t, meta);
+	s += ds;
+	EndPrimitive();
+  }
+ }
+]]></geom>
+<frag>
+<![CDATA[#version 410
+
+uniform vec4 ambient;
+uniform vec4 diffuse;
+uniform vec4 specular;
+uniform float shininess;
+uniform float ambientCoefficent;
+uniform float diffuseCoefficent;
+uniform float specularCoefficent;
+
+uniform vec4 lightPosition_camSpace; //light Position in camera space
+
+in fragmentData
+{
+  vec4 position_camSpace;
+  vec3 normal_camSpace;
+  vec2 textureCoordinate;
+  vec4 color;
+} frag;
+
+out vec4 fragColor; 
+
+//Fragment shader computes the final color
+void main(void)
+{
+  fragColor =  frag.color;
+}
+]]></frag>
+<R2TVert>
+<![CDATA[#version 410
+
+layout(location = 0) in vec4 vertex_worldSpace;
+uniform mat4 mvMatrix;
+uniform mat4 pMatrix;
+
+//in vec4 vertex_worldSpace;
+in vec2 textureCoordinate_input;
+
+out vec2 varyingTextureCoordinate;
+
+//Vertex shader compute the vectors per vertex
+void main(void)
+{
+  //Put the vertex in the correct coordinate system by applying the model view matrix
+  vec4 vertex_camSpace = mvMatrix*vertex_worldSpace;
+
+  varyingTextureCoordinate = textureCoordinate_input;
+  gl_Position = pMatrix * vertex_camSpace;
+}
+]]></R2TVert>
+<R2TFrag>
+<![CDATA[#version 410
+
+uniform sampler2D textureRendered;
+
+in vec2 varyingTextureCoordinate;
+
+out vec4 fragColor;
+
+void main(void)
+{
+  //Render the texture on a quad
+  fragColor = texture(textureRendered, varyingTextureCoordinate.st);
+}
+]]></R2TFrag>
+</pipeline>
