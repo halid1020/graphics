@@ -54,6 +54,7 @@ void main(void)
 
 
 
+
 ]]></vertex>
 <geom>
 <![CDATA[#version 400
@@ -109,6 +110,7 @@ void main() {
 
 
 
+
 ]]></geom>
 <frag>
 <![CDATA[#version 400
@@ -137,6 +139,7 @@ void main(void)
 	//Not used in that task
     fragColor =  frag.color;
 }
+
 
 
 
@@ -185,6 +188,7 @@ void  main ()
 
 
 
+
 ]]></R2TVert>
 <R2TFrag>
 <![CDATA[#version 400
@@ -199,11 +203,11 @@ uniform mat4 pMatrix;
 uniform mat3 normalMatrix; //mv matrix without translation
 
 //light
-uniform vec3 lightPosition_worldSpace = vec3(500, 500, 0);
-uniform float light_intensity = 3000000;
+uniform vec3 lightPosition_worldSpace = vec3(50, 35,20);
+uniform float light_intensity = 40000;
 
-uniform float shininess = 10;
-uniform float ambientCoefficient = 0.5;
+uniform float shininess = 9;
+uniform float ambientCoefficient = 0.1;
 uniform float diffuseCoefficient = 1;
 uniform float specularCoefficient = 1;
 const float pi = 3.1415926f;
@@ -214,7 +218,7 @@ const int numSpheres = 6;
 
 //example data structures
 struct Ray
-{
+{ 
 	vec3 origin;
 	vec3 dir;
 };
@@ -306,9 +310,9 @@ void plane_intersect(Plane pl, Ray ray, inout Intersection intersect)
 	intersect.point = p0 + miu*d;
 	intersect.normal = n;
 	
-	float x = mod(intersect.point.x, 2.0);
-	float z = mod(intersect.point.z, 2.0);
-	int c = int(0 <= x && x < 1)^int(0 <= z && z < 1);
+	float x = mod(intersect.point.x, 0.8);
+	float z = mod(intersect.point.z, 1.0);
+	int c = int(0 <= x && x < 0.4)^int(0 <= z && z < 0.4)^1;
 	intersect.colour = vec3(c, c, c);
 }
 
@@ -325,11 +329,13 @@ void Intersect(Ray r, inout Intersection i)
 	
 	//find closest intersection
 	i.hit = 0;
+	bool found = false;
 	float min_t = -1;
 	for (int k = 0; k < 7; k++) {
 		if (intersections[k].hit == 1) {
 			float t = intersections[k].t;
-			if (t < min_t || min_t < 0) {
+			if (t < min_t || !found) {
+                found = true;
 				min_t = t;
 				i = intersections[k];
 			}	
@@ -344,11 +350,8 @@ float rnd()
 	return float(seed)/509.0;
 }
 
-vec3 computeShadow(in Intersection intersect)
+vec4 computeShadow(in Intersection intersect)
 {
-
-
-	
 	Ray shadow_ray;
 	shadow_ray.origin = intersect.point + epsilon*intersect.normal;
 	shadow_ray.dir = lightPosition_worldSpace - intersect.point;
@@ -357,9 +360,9 @@ vec3 computeShadow(in Intersection intersect)
 	Intersect(shadow_ray, shadow_ray_intersection);
 	
 	if (shadow_ray_intersection.hit==1) {
-		return vec3(-0.4, -0.4, -0.4);	
+		return vec4(0, 0, 0, 0);	
 	}
-	return vec3(0,0,0);
+	return vec4(1,1,1,1);
 }
 
 
@@ -375,9 +378,11 @@ vec4 local_illumination(in vec3 viewPoint, in Intersection intersect) {
 	vec3 l = normalize(lightPosition_worldSpace - intersect.point);
 	vec3 v = normalize(viewPoint - intersect.point);
 	vec3 r = normalize(2*dot(n,l)*n -l);
+	
+	vec4 shadow = computeShadow(intersect);
 	return ambientCoefficient*ambient +
-		   c*diffuseCoefficient*max(0, dot(n,l))*diffuse +
-		   c*specularCoefficient*pow(max(0,dot(v,r)), shininess)*specular;
+		   shadow*(c*diffuseCoefficient*max(0, dot(n,l))*diffuse +
+		           c*specularCoefficient*pow(max(0,dot(v,r)), shininess)*specular);
 }
 
 void main()
@@ -411,7 +416,7 @@ void main()
 	//TODO implement ray tracing main loop here
 	
 	//define ray
-	Ray ray;
+	Ray ray;	
 	vec4 origin_viewSpace  = vec4(0, 0, 0, 1);
 	vec4 origin_worldSpace = inverse(mvMatrixScene)*origin_viewSpace;
     ray.origin = origin_worldSpace.xyz;
@@ -420,7 +425,7 @@ void main()
 	vec4 dir_worldSpace = inverse(mvMatrixScene)*dir_viewSpace;
     ray.dir = normalize(dir_worldSpace.xyz);
 	
-	float k = 1;
+	float I = 1;
 	for (int i = 1; i <= raytraceDepth; i++) {
 		//intersect with all objects
 		Intersection intersect;
@@ -430,25 +435,19 @@ void main()
 			break;
 		}
 		
-		//ambient color
-		colour += k*local_illumination(ray.origin, intersect);
-		//shadow			
-		colour += k*vec4(computeShadow(intersect),1);
+		colour += I*local_illumination(ray.origin, intersect);
 		
 		//update secondary ray using intersect
 		ray.dir = normalize(ray.dir - 
 							(2*dot(ray.dir, intersect.normal))*intersect.normal);
 		ray.origin = intersect.point + epsilon*intersect.normal;
 		
-		if (dot(ray.origin, intersect.normal) > 0) {
-			break;
-		}		
-
-		k = k*0.5;
+		I = I*0.30;
 	}
 	
 	outcolour = colour;
 }
+
 
 
 
