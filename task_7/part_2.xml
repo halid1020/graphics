@@ -55,6 +55,9 @@ void main(void)
 
 
 
+
+
+
 ]]></vertex>
 <geom>
 <![CDATA[#version 400
@@ -111,6 +114,9 @@ void main() {
 
 
 
+
+
+
 ]]></geom>
 <frag>
 <![CDATA[#version 400
@@ -139,6 +145,9 @@ void main(void)
 	//Not used in that task
     fragColor =  frag.color;
 }
+
+
+
 
 
 
@@ -189,6 +198,9 @@ void  main ()
 
 
 
+
+
+
 ]]></R2TVert>
 <R2TFrag>
 <![CDATA[#version 400
@@ -202,10 +214,12 @@ uniform mat4 mvMatrixScene;
 uniform mat4 pMatrix;
 uniform mat3 normalMatrix; //mv matrix without translation
 uniform vec2 mouse;
+uniform float indexOfRefraction = 1.0;
+
 
 //light
-uniform vec3 lightPosition_worldSpace = vec3(6, 4, 3);
-uniform float light_intensity = 700;
+uniform vec3 lightPosition_worldSpace = vec3(4, 10, 7);
+uniform float light_intensity = 2000;
 
 uniform float shininess = 10;
 uniform float ambientCoefficient = 0.1;
@@ -214,7 +228,7 @@ uniform float specularCoefficient = 1;
 const float pi = 3.1415926f;
 const float epsilon = 0.0001;
 
-const int raytraceDepth = 42;
+const int raytraceDepth = 4;
 const int numSpheres = 6;
 
 //example data structures
@@ -222,18 +236,26 @@ struct Ray
 { 
 	vec3 origin;
 	vec3 dir;
+	float transparency;
+	float intensity;
+	float indexOfRefraction;
+	int depth;
 };
 struct Sphere
 {
 	vec3 centre;
 	float radius;
 	vec3 colour;
+	float indexOfRefraction;
+	float transparency;
 };
 struct Plane
 {
 	vec3 point;
 	vec3 normal;
 	vec3 colour;
+	float indexOfRefraction;
+	float transparency;
 };
 
 struct Intersection
@@ -241,8 +263,12 @@ struct Intersection
     float t; //closest hit
     vec3 point;	// hit point
     vec3 normal;	// normal
+	vec3 normal_illu;	// normal
     int hit;	//did it hit?
     vec3 colour; // colour accumulation, can be also implemented in struct Ray
+	float indexOfRefraction;
+	bool inObject;
+	float transparency;
 };
 
 void shpere_intersect(Sphere sph, Ray ray, inout Intersection intersect)
@@ -278,7 +304,10 @@ void shpere_intersect(Sphere sph, Ray ray, inout Intersection intersect)
 		intersect.colour = sph.colour;
 		intersect.hit = 1;
 		intersect.point = p0 + miu_2*d;
-		intersect.normal = normalize(intersect.point-ps);
+		intersect.inObject = false;
+		intersect.normal_illu = intersect.normal = normalize(intersect.point-ps);
+		intersect.indexOfRefraction = sph.indexOfRefraction;
+		intersect.transparency = sph.transparency;
 		return;
 	} 
 
@@ -287,10 +316,14 @@ void shpere_intersect(Sphere sph, Ray ray, inout Intersection intersect)
 	intersect.colour = sph.colour;
 	intersect.hit = 1;
 	intersect.point = p0 + miu_1*d;
-	intersect.normal = normalize(intersect.point-ps);
+	intersect.normal = normalize(ps - intersect.point);
+	intersect.normal_illu = -intersect.normal;
+	intersect.indexOfRefraction = sph.indexOfRefraction;
+	intersect.inObject = true;
+	intersect.transparency = 1;
 }
 
-void plane_intersect(Plane pl, Ray ray, inout Intersection intersect)
+void plane_intersect(Plane pl, Ray ray, inout Intersection intersect, bool checkboard)
 {
 	intersect.hit = 0;
 	intersect.colour = vec3(0, 0, 0);
@@ -309,24 +342,33 @@ void plane_intersect(Plane pl, Ray ray, inout Intersection intersect)
 	intersect.t = miu;
 	intersect.hit = 1;
 	intersect.point = p0 + miu*d;
+	intersect.normal_illu = n;
 	intersect.normal = n;
+	intersect.inObject=false;
+	intersect.transparency = pl.transparency;
 	
-	float x = mod(intersect.point.x, 0.8);
-	float z = mod(intersect.point.z, 1.0);
-	int c = int(0 <= x && x < 0.4)^int(0 <= z && z < 0.4)^1;
-	intersect.colour = vec3(c, c, c);
+	float x = mod(intersect.point.x, 2.0);
+	float z = mod(intersect.point.z, 2.0);
+	if (checkboard) {
+		int c = int(0 <= x && x < 1.0)^int(0 <= z && z < 1.0)^1;
+		intersect.colour = vec3(c, c, c);
+	} else {
+		intersect.colour = pl.colour;
+	}
+	intersect.indexOfRefraction = pl.indexOfRefraction;
 }
 
 Sphere sphere[numSpheres];
-Plane plane;
+Plane plane[2];
 void Intersect(Ray r, inout Intersection i)
 {
 	// intersect all objects
-	Intersection intersections[7];
+	Intersection intersections[8];
 	for (int k = 0; k < 6; k++) {
 		shpere_intersect(sphere[k], r, intersections[k]);		
 	}
-	plane_intersect(plane, r, intersections[6]);
+	plane_intersect(plane[0], r, intersections[6], true);
+	//plane_intersect(plane[1], r, intersections[7], false);
 	
 	//find closest intersection
 	i.hit = 0;
@@ -354,7 +396,7 @@ float rnd()
 vec4 computeShadow(in Intersection intersect)
 {
 	Ray shadow_ray;
-	shadow_ray.origin = intersect.point + epsilon*intersect.normal;
+	shadow_ray.origin = intersect.point + epsilon*intersect.normal_illu;
 	shadow_ray.dir = lightPosition_worldSpace - intersect.point;
 
 	Intersection shadow_ray_intersection;
@@ -366,7 +408,6 @@ vec4 computeShadow(in Intersection intersect)
 	return vec4(1,1,1,1);
 }
 
-
 vec4 local_illumination(in vec3 viewPoint, in Intersection intersect) {
 	vec4 ambient = vec4(intersect.colour, 1);
 	vec4 diffuse = vec4(intersect.colour, 1);
@@ -375,7 +416,7 @@ vec4 local_illumination(in vec3 viewPoint, in Intersection intersect) {
 	float phi_s = light_intensity;
 	float d = distance(intersect.point, lightPosition_worldSpace);
 	float c = phi_s/(4*pi*d*d);
-	vec3 n = normalize(vec3(intersect.normal));
+	vec3 n = normalize(vec3(intersect.normal_illu));
 	vec3 l = normalize(lightPosition_worldSpace - intersect.point);
 	vec3 v = normalize(viewPoint - intersect.point);
 	vec3 r = normalize(2*dot(n,l)*n -l);
@@ -386,68 +427,174 @@ vec4 local_illumination(in vec3 viewPoint, in Intersection intersect) {
 		           c*specularCoefficient*pow(max(0,dot(v,r)), shininess)*specular);
 }
 
+
+float fresnel_calculate(in Ray ray, in Intersection intersect)
+{
+	float n1 = ray.indexOfRefraction;
+	float n2 = intersect.indexOfRefraction;
+	float k_fresnel_0 = (n1-n2)*(n1-n2)/(n1+n2)/(n1+n2);
+	return k_fresnel_0 + 
+           (1.0-k_fresnel_0)*pow((1.0- dot(intersect.normal, -ray.dir)), 5);
+}
+
+
+Ray reflect_ray(in Ray ray, in Intersection intersect,in float coefficient)
+{
+	Ray new_ray;
+	vec3 n = intersect.normal;
+	vec3 v = ray.dir;
+	new_ray.dir = normalize(v - n*(2*dot(ray.dir, n)));
+	new_ray.origin = intersect.point + epsilon*n;
+	new_ray.transparency = ray.transparency;
+	new_ray.intensity = ray.intensity*coefficient;
+	new_ray.indexOfRefraction = intersect.indexOfRefraction;
+	new_ray.depth = ray.depth+1;
+	new_ray.transparency = ray.transparency;
+	return new_ray;
+}
+
+Ray refract_ray(in Ray ray, in Intersection intersect,in float coefficient)
+{
+	Ray new_ray;
+	vec3 n = intersect.normal;
+	vec3 v = ray.dir;
+	float n1 = ray.indexOfRefraction;
+	float n2 = intersect.indexOfRefraction;
+
+	float dot_n_v = dot(n, v);
+	float n1_over_n2 = n1/n2;
+	float n2_over_n1 = n2/n1;
+
+	float is_refract = dot_n_v*dot_n_v + n2_over_n1*n2_over_n1 -1.0;
+	if(is_refract < 0.0) {
+		new_ray.intensity = 0.0;
+		return new_ray;
+	}
+	
+	new_ray.dir = normalize(refract(v, n, n1_over_n2));
+	new_ray.origin = intersect.point - epsilon*n;
+	new_ray.intensity = ray.intensity*coefficient;
+	new_ray.indexOfRefraction = intersect.indexOfRefraction;
+	new_ray.transparency = intersect.transparency;
+	new_ray.depth = ray.depth+1;
+	return new_ray;
+}
+
+
 void main()
 {
 	//please leave the scene config unaltered for marking 
 	sphere[0].centre   = vec3(-2.0, 1.5, -3.5);
 	sphere[0].radius   = 1.5;
 	sphere[0].colour = vec3(0.8,0.8,0.8);
+	sphere[0].indexOfRefraction = 1.3;
+	sphere[0].transparency = 0.5;
+	
 	sphere[1].centre   = vec3(-0.5, 0.0, -2.0);
 	sphere[1].radius   = 0.6;
 	sphere[1].colour = vec3(0.3,0.8,0.3);
+	sphere[1].indexOfRefraction = 1.1;
+	
 	sphere[2].centre   = vec3(1.0, 0.7, -2.2);
 	sphere[2].radius   = 0.8;
 	sphere[2].colour = vec3(0.3,0.8,0.8);
+	sphere[2].indexOfRefraction = 3.0;
+	sphere[2].transparency = 0.0;
+	
 	sphere[3].centre   = vec3(0.7, -0.3, -1.2);
 	sphere[3].radius   = 0.2;
 	sphere[3].colour = vec3(0.8,0.8,0.3);
+	sphere[3].indexOfRefraction = 2.0;
+	sphere[3].transparency = 0.8;
+	
 	sphere[4].centre   = vec3(-0.7, -0.3, -1.2);
 	sphere[4].radius   = 0.2;
 	sphere[4].colour = vec3(0.8,0.3,0.3);
+	sphere[4].indexOfRefraction = 2.5;
+	sphere[4].transparency = 0.3;
+
 	sphere[5].centre   = vec3(0.2, -0.2, -1.2);
 	sphere[5].radius   = 0.3;
 	sphere[5].colour = vec3(0.8,0.3,0.8);
-	plane.point = vec3(0,-0.5, 0);
-	plane.normal = vec3(0, 1.0, 0);
-	plane.colour = vec3(1, 1, 1);
+	sphere[5].indexOfRefraction = 2.8;
+	sphere[5].transparency = 0.2;
+
+	plane[0].point = vec3(0,-0.5, 0);
+	plane[0].normal = vec3(0, 1.0, 0);
+	plane[0].colour = vec3(1, 1, 1);
+	plane[0].indexOfRefraction = 3;
+
+	/*
+	plane[1].point = vec3(100,0, 0);
+	plane[1].normal = vec3(1.0, 0, 0);
+	plane[1].colour = vec3(1, 0, 0);
+	plane[1].indexOfRefraction = 3;
+	*/
 	seed = int(mod(dir.x * dir.y * 39786038.0, 65536.0));
 	//scene definition end
 
 	vec4 colour = vec4(0,0,0,1);
-	//TODO implement ray tracing main loop here
-	
+
 	//define ray
-	Ray ray;	
+	Ray rays[40];
+	Ray first_ray;	
+
 	vec4 origin_viewSpace  = vec4(0, 0, 0, 1);
 	vec4 origin_worldSpace = inverse(mvMatrixScene)*origin_viewSpace;
-    ray.origin = origin_worldSpace.xyz;
-	
+    first_ray.origin = origin_worldSpace.xyz;
+
 	vec4 dir_viewSpace  = vec4(dir, 0);
 	vec4 dir_worldSpace = inverse(mvMatrixScene)*dir_viewSpace;
-    ray.dir = normalize(dir_worldSpace.xyz);
-	
-	float I = 1;
-	for (int i = 1; i <= raytraceDepth; i++) {
+    first_ray.dir = normalize(dir_worldSpace.xyz);
+	first_ray.intensity = 1.0;
+	first_ray.transparency = 1.0;
+	first_ray.indexOfRefraction = 1.0;
+	first_ray.depth = 0;
+
+	rays[0] = first_ray;
+	// Start ray tracing
+	int head = -1;
+	int tail =  0;
+	int cnt = 0;
+	while (head < tail && cnt < 20) {
+		head ++;
+		cnt++;
+		Ray cur_ray = rays[head];
+
 		//intersect with all objects
 		Intersection intersect;
-		Intersect(ray, intersect);
-		
-		if (intersect.hit == 0) {
-			break;
+		Intersect(cur_ray, intersect);
+		if (intersect.hit==0) {
+			continue;
 		}
-		
-		colour += I*local_illumination(ray.origin, intersect);
-		
-		//update secondary ray using intersect
-		ray.dir = normalize(ray.dir - 
-							(2*dot(ray.dir, intersect.normal))*intersect.normal);
-		ray.origin = intersect.point + epsilon*intersect.normal;
-		
-		I = I*0.30;
-	}
 	
+		vec4 cur_color = cur_ray.intensity*local_illumination(cur_ray.origin, intersect);
+		colour += cur_ray.transparency*cur_color;
+		// generate rays
+		if (cur_ray.depth < raytraceDepth) {
+			// calculate intensity
+			float k_fresnel = fresnel_calculate(cur_ray, intersect);
+
+			// refraction ray
+			Ray new_ray = refract_ray(cur_ray, intersect, 1.0-k_fresnel);
+
+			if (new_ray.intensity > epsilon && new_ray.transparency > epsilon){
+				rays[++tail] = new_ray;
+			}
+
+			new_ray = reflect_ray(cur_ray, intersect, k_fresnel);
+			if (new_ray.intensity > epsilon && new_ray.transparency > epsilon){
+				rays[++tail] = new_ray;
+			}
+
+			
+		}
+	}	
 	outcolour = colour;
 }
+
+
+
 
 
 
