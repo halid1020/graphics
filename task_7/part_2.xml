@@ -58,6 +58,7 @@ void main(void)
 
 
 
+
 ]]></vertex>
 <geom>
 <![CDATA[#version 400
@@ -100,6 +101,7 @@ void main() {
   }
   EndPrimitive();
 }
+
 
 
 
@@ -162,6 +164,7 @@ void main(void)
 
 
 
+
 ]]></frag>
 <R2TVert>
 <![CDATA[#version 400
@@ -201,6 +204,7 @@ void  main ()
 
 
 
+
 ]]></R2TVert>
 <R2TFrag>
 <![CDATA[#version 400
@@ -213,14 +217,18 @@ uniform mat4 mvMatrix;
 uniform mat4 mvMatrixScene;
 uniform mat4 pMatrix;
 uniform mat3 normalMatrix; //mv matrix without translation
-uniform vec2 mouse;
+
+
 uniform float indexOfRefraction = 1.0;
 
+//sky texture
+uniform sampler2D nightSky;
 
 //light
-uniform vec3 lightPosition_worldSpace = vec3(4, 10, 7);
+uniform vec3 lightPosition_worldSpace = vec3(0, 10, 0);
 uniform float light_intensity = 2000;
 
+//local illumination para
 uniform float shininess = 10;
 uniform float ambientCoefficient = 0.1;
 uniform float diffuseCoefficient = 1;
@@ -229,7 +237,11 @@ const float pi = 3.1415926f;
 const float epsilon = 0.0001;
 
 const int raytraceDepth = 4;
+
+// Objects number
 const int numSpheres = 6;
+const int numSkyPlanes = 1;
+
 
 //example data structures
 struct Ray
@@ -269,12 +281,14 @@ struct Intersection
 	float indexOfRefraction;
 	bool inObject;
 	float transparency;
+	bool is_wall;
 };
 
 void shpere_intersect(Sphere sph, Ray ray, inout Intersection intersect)
 {
 	intersect.hit = 0;
 	intersect.colour = vec3(0, 0, 0);
+	intersect.is_wall = false;
 	float epsilon = 0;
 
 	vec3 d = normalize(ray.dir);
@@ -352,29 +366,37 @@ void plane_intersect(Plane pl, Ray ray, inout Intersection intersect, bool check
 	if (checkboard) {
 		int c = int(0 <= x && x < 1.0)^int(0 <= z && z < 1.0)^1;
 		intersect.colour = vec3(c, c, c);
+		intersect.is_wall = false;
 	} else {
 		intersect.colour = pl.colour;
+		intersect.is_wall = true;
 	}
 	intersect.indexOfRefraction = pl.indexOfRefraction;
 }
 
 Sphere sphere[numSpheres];
-Plane plane[2];
+Plane bottom_plane;
+Plane sky_plane[numSkyPlanes];
+
 void Intersect(Ray r, inout Intersection i)
 {
 	// intersect all objects
-	Intersection intersections[8];
-	for (int k = 0; k < 6; k++) {
+	const int numObjects = numSpheres + numSkyPlanes + 1;
+	Intersection intersections[numObjects];
+	for (int k = 0; k < numSpheres; k++) {
 		shpere_intersect(sphere[k], r, intersections[k]);		
 	}
-	plane_intersect(plane[0], r, intersections[6], true);
+	plane_intersect(bottom_plane, r, intersections[numSpheres], true);
 	//plane_intersect(plane[1], r, intersections[7], false);
-	
+	for (int k = numSpheres + 1; k < numObjects; k++) {
+		plane_intersect(sky_plane[k-numSpheres-1], r, intersections[k], false);
+	}	
+
 	//find closest intersection
 	i.hit = 0;
 	bool found = false;
 	float min_t = -1;
-	for (int k = 0; k < 7; k++) {
+	for (int k = 0; k < numObjects; k++) {
 		if (intersections[k].hit == 1) {
 			float t = intersections[k].t;
 			if (t < min_t || !found) {
@@ -412,6 +434,10 @@ vec4 local_illumination(in vec3 viewPoint, in Intersection intersect) {
 	vec4 ambient = vec4(intersect.colour, 1);
 	vec4 diffuse = vec4(intersect.colour, 1);
 	vec4 specular = vec4(1, 1, 1, 1);
+
+	if(intersect.is_wall) {
+		return ambient;	
+	}
 
 	float phi_s = light_intensity;
 	float d = distance(intersect.point, lightPosition_worldSpace);
@@ -519,17 +545,37 @@ void main()
 	sphere[5].indexOfRefraction = 2.8;
 	sphere[5].transparency = 0.2;
 
-	plane[0].point = vec3(0,-0.5, 0);
-	plane[0].normal = vec3(0, 1.0, 0);
-	plane[0].colour = vec3(1, 1, 1);
-	plane[0].indexOfRefraction = 3;
+	bottom_plane.point = vec3(0,-10, 0);
+	bottom_plane.normal = vec3(0, -1.0, 0);
+	bottom_plane.colour = vec3(1, 1, 1);
+	bottom_plane.indexOfRefraction = 3;
 
 	/*
-	plane[1].point = vec3(100,0, 0);
-	plane[1].normal = vec3(1.0, 0, 0);
-	plane[1].colour = vec3(1, 0, 0);
-	plane[1].indexOfRefraction = 3;
-	*/
+	sky_plane[0].point = vec3(100,0, 0);
+	sky_plane[0].normal = vec3(-1.0, 0, 0);
+	sky_plane[0].colour = vec3(1, 0, 0);
+	sky_plane[0].transparency = 0;
+
+	sky_plane[1].point = vec3(-1000,0, 0);
+	sky_plane[1].normal = vec3(1.0, 0, 0);
+	sky_plane[1].colour = vec3(1, 0, 0);
+	sky_plane[1].transparency = 0;
+	
+	sky_plane[2].point = vec3(0,0, 1000);
+	sky_plane[2].normal = vec3(0, 0, -1.0);
+	sky_plane[2].colour = vec3(1, 0, 0);
+	sky_plane[2].transparency = 0;
+
+	sky_plane[3].point = vec3(0,0, -1000);
+	sky_plane[3].normal = vec3(0, 0, -1.0);
+	sky_plane[3].colour = vec3(1, 0, 0);
+	sky_plane[3].transparency = 0;
+
+	sky_plane[4].point = vec3(0,1000, 0);
+	sky_plane[4].normal = vec3(0, -1.0, 0);
+	sky_plane[4].colour = vec3(1, 0, 0);
+	sky_plane[4].transparency = 0;
+*/
 	seed = int(mod(dir.x * dir.y * 39786038.0, 65536.0));
 	//scene definition end
 
@@ -570,6 +616,8 @@ void main()
 	
 		vec4 cur_color = cur_ray.intensity*local_illumination(cur_ray.origin, intersect);
 		colour += cur_ray.transparency*cur_color;
+
+		if (tail > 20 || intersect.is_wall) continue;
 		// generate rays
 		if (cur_ray.depth < raytraceDepth) {
 			// calculate intensity
@@ -592,6 +640,7 @@ void main()
 	}	
 	outcolour = colour;
 }
+
 
 
 
